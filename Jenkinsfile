@@ -32,14 +32,21 @@ pipeline {
             }
         }
 
-        stage('Run Unit Tests') {
+        /*stage('Run Unit Tests') {
             steps {
                 echo '### Running unit tests ###'
                 sh '''
                         mvn -s settings.xml -B clean test
                    '''
             }
-        }
+        }*/
+		stage ('SonarQube Analysis') {
+			steps {
+				  withSonarQubeEnv('sonar') {
+					 sh 'mvn -U clean install sonar:sonar'
+				  }
+				}
+		}
 
         stage('Static Code Analysis') {
             steps {
@@ -49,6 +56,9 @@ pipeline {
                    '''
             }
         }
+		
+		
+
 
         stage('Create fat JAR') {
             steps {
