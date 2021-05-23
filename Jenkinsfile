@@ -5,16 +5,16 @@ pipeline {
     }
     agent {
       node {
-        //TODO: Add label for the Maven jenkins agent
+        label 'maven'
       }
     }
 
     environment {
         //TODO: Customize these variables for your environment
-        DEV_PROJECT = "youruser-movies-dev"
-        STAGE_PROJECT = "youruser-movies-stage"
-        APP_GIT_URL = "https://github.com/youruser/DO288-apps"
-        NEXUS_SERVER = "http://nexus-common.apps.cluster.domain.example.com/repository/java"
+		DEV_PROJECT = "bookstore-dev"
+        STAGE_PROJECT = "bookstore-stage"
+        APP_GIT_URL = "https://github.com/galaxy78-openshift-pipeline/movies"
+        NEXUS_SERVER = "https://nexus-cicd.dte-ocp46-zb9b4f-915b3b336cabec458a7c7ec2aa7c625f-0000.us-east.containers.appdomain.cloud/repository/maven-public"
 
         // DO NOT CHANGE THE GLOBAL VARS BELOW THIS LINE
         APP_NAME = "movies"
@@ -27,7 +27,6 @@ pipeline {
             steps {
                 echo '### Checking for compile errors ###'
                 sh '''
-                        cd ${APP_NAME}
                         mvn -s settings.xml -B clean compile
                    '''
             }
@@ -37,7 +36,6 @@ pipeline {
             steps {
                 echo '### Running unit tests ###'
                 sh '''
-                        cd ${APP_NAME}
                         mvn -s settings.xml -B clean test
                    '''
             }
@@ -47,7 +45,6 @@ pipeline {
             steps {
                 echo '### Running pmd on code ###'
                 sh '''
-                        cd ${APP_NAME}
                         mvn -s settings.xml -B clean pmd:check
                    '''
             }
@@ -57,7 +54,6 @@ pipeline {
             steps {
                 echo '### Creating fat JAR ###'
                 sh '''
-                        cd ${APP_NAME}
                         mvn -s settings.xml -B clean package -DskipTests=true
                    '''
             }
@@ -77,17 +73,29 @@ pipeline {
                 script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
-                        openshift.selector("bc", "${APP_NAME}").startBuild("--from-file=${APP_NAME}/target/${APP_NAME}.jar", "--wait=true", "--follow=true")
+                        openshift.selector("bc", "${APP_NAME}").startBuild("--from-file=target/${APP_NAME}.jar", "--wait=true", "--follow=true")
                       }
                     }
                 }
-                // TODO: Create a new OpenShift application based on the ${APP_NAME}:latest image stream
-                // TODO: Expose the ${APP_NAME} service for external access
+                sh '''
+					oc new-app --as-deployment-config ${APP_NAME}:latest -n ${DEV_PROJECT}
+					oc expose svc/${APP_NAME} -n ${DEV_PROJECT}
+				'''
             }
         }
 
         stage('Wait for deployment in DEV env') {
-            //TODO: Watch deployment until pod is in 'Running' state
+            steps {
+                script {
+                    openshift.withCluster() {
+                        openshift.withProject( "${DEV_PROJECT}" ) {
+                            openshift.selector("dc", "${APP_NAME}").related('pods').untilEach(1) {
+                                return (it.object().status.phase == "Running")
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         stage('Promote to Staging Env') {
@@ -97,7 +105,7 @@ pipeline {
                 }
                 script {
                     openshift.withCluster() {
-                    // TODO: Tag the ${APP_NAME}:latest image stream in the dev env as ${APP_NAME}:stage in staging
+						openshift.tag("${DEV_PROJECT}/${APP_NAME}:latest", "${STAGE_PROJECT}/${APP_NAME}:stage")
                     }
                 }
             }
@@ -113,7 +121,14 @@ pipeline {
                    '''
 
                 echo '### Creating a new app in Staging ###'
-                // TODO: Create a new app in staging and expose the service
+                sh '''
+					oc new-app --as-deployment-config \
+					--name ${APP_NAME} \
+					-i ${APP_NAME}:stage \
+					-n ${STAGE_PROJECT}
+					
+					oc expose svc/${APP_NAME}
+				'''
             }
         }
 
